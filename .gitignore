@@ -1,0 +1,67 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Virtual environments
+venv/
+.env
+.venv/
+env/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor directories and files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Databases (SQLite, etc.) - keep local DB files out of VCS
+*.db
+*.sqlite
+*.sqlite3
+
+# Compiled assets
+*.min.js
+*.min.css
+
+# SSH keys, secrets
+id_rsa
+id_rsa.pub
+*.pem
+*.key
+
+# Misc
+*.bak
+*.swp
+
+# Static build output (if you later add a frontend build step)
+node_modules/
+public/
+build/
+
+# Keep this repo-level README and requirements; do not ignore code files
+

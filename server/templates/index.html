@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+  <head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>dnsflowd | Network Monitoring Dashboard</title>
+    <!-- Local copies of third-party assets (created by scripts/fetch_assets.sh) -->
+    <link href="{{ url_for('static', filename='vendor/geist_fonts.css') }}" rel="stylesheet"/>
+    <link href="{{ url_for('static', filename='vendor/material_symbols.css') }}" rel="stylesheet"/>
+    <script src="{{ url_for('static', filename='vendor/tailwind.js') }}"></script>
+    <style>
+      .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+      ::-webkit-scrollbar { width: 4px; height: 4px; }
+      ::-webkit-scrollbar-track { background: #0b0c0e; }
+      ::-webkit-scrollbar-thumb { background: #1e2535; border-radius: 0; }
+      ::-webkit-scrollbar-thumb:hover { background: #3c4a45; }
+
+      .scanline {
+        width: 100%; height: 2px;
+        background: rgba(100, 255, 218, 0.05);
+        position: absolute; top: 0; left: 0;
+        pointer-events: none;
+        animation: scan 8s linear infinite;
+      }
+      @keyframes scan { 0% { top: 0; } 100% { top: 100%; } }
+
+      .pulsing-dot { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50%       { opacity: 0.5; transform: scale(0.8); }
+      }
+
+      @keyframes rowFlash {
+        0%   { background-color: rgba(56, 222, 187, 0.12); }
+        100% { background-color: transparent; }
+      }
+      .row-new { animation: rowFlash 1.2s ease-out forwards; }
+
+      #toast {
+        position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%);
+        padding: 8px 20px; border-radius: 4px;
+        font-family: 'JetBrains Mono', monospace; font-size: 12px;
+        z-index: 9999; opacity: 0;
+        transition: opacity 0.2s ease;
+        pointer-events: none;
+      }
+      #toast.show    { opacity: 1; }
+      #toast.success { background: #0d3b2e; color: #38debb; border: 1px solid #38debb55; }
+      #toast.error   { background: #3b0d0d; color: #ff6b6b; border: 1px solid #ff6b6b55; }
+
+      input[type="text"], input[type="checkbox"] { accent-color: #38debb; }
+      input[type="text"] {
+        background: #111318; border: 1px solid #1e2535; color: #e2e2e8;
+        font-family: 'JetBrains Mono', monospace; font-size: 12px;
+        padding: 6px 10px; outline: none; border-radius: 2px;
+        transition: border-color 0.15s;
+      }
+      input[type="text"]:focus { border-color: #38debb55; }
+
+      button {
+        font-family: 'JetBrains Mono', monospace; font-size: 11px;
+        font-weight: 600; letter-spacing: 0.04em; cursor: pointer;
+        border-radius: 2px; border: none; transition: opacity 0.15s;
+      }
+      button:hover { opacity: 0.85; }
+      .btn-primary   { background: #38debb; color: #00382d; padding: 6px 14px; }
+      .btn-secondary { background: #1a1c20; color: #e2e2e8; border: 1px solid #1e2535; padding: 6px 12px; }
+      .btn-danger    { background: #3b0d0d; color: #ff6b6b; border: 1px solid #ff6b6b33; padding: 4px 10px; font-size: 10px; }
+    </style>
+    <script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              background:                  '#111318',
+              on_surface:                  '#e2e2e8',
+              primary:                     '#ffffff',
+              'surface-container-low':     '#1a1c20',
+              'surface-container':         '#1e2025',
+              'surface-container-high':    '#282a2e',
+              'surface-container-highest': '#333539',
+              'surface-tint':              '#38debb',
+              outline:                     '#1e2535',
+            },
+            borderRadius: { DEFAULT: '0.125rem', lg: '0.25rem', xl: '0.5rem', full: '0.75rem' },
+            fontFamily:   { label: ['Geist'], mono: ['JetBrains Mono'], body: ['Geist'] },
+          }
+        }
+      }
+    </script>
+  </head>
+
+  <body class="bg-background text-on_surface flex h-screen overflow-hidden font-body">
+
+    <div id="toast"></div>
+
+    <div class="flex-1 flex flex-col min-w-0 bg-background relative overflow-hidden">
+      <div class="scanline"></div>
+
+      <!-- Header -->
+      <header class="flex justify-between items-center w-full px-6 h-10 border-b border-outline bg-background z-10 shrink-0">
+        <div class="flex items-center gap-6">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-[#38debb] pulsing-dot"></span>
+            <span class="font-mono font-bold text-primary tracking-widest uppercase text-sm">dnsflowd</span>
+          </div>
+        </div>
+        <div class="flex items-center gap-6 font-mono text-xs text-on_surface/60">
+          <div class="flex items-center gap-1">
+            <span class="material-symbols-outlined text-[13px]">timer</span>
+            <span>UPTIME: <span id="stat-uptime" class="text-primary">00:00:00</span></span>
+          </div>
+          <div class="flex items-center gap-1">
+            <span class="material-symbols-outlined text-[13px]">dns</span>
+            <span>SERVER: <span id="stat-server-ip" class="text-primary">--</span></span>
+          </div>
+          <div class="flex items-center gap-1">
+            <span class="material-symbols-outlined text-[13px]">schedule</span>
+            <span id="stat-time" class="text-primary">--:--:-- UTC</span>
+          </div>
+        </div>
+      </header>
+
+      <main class="flex-1 flex overflow-hidden">
+
+        <!-- Left: stats + stream -->
+        <section class="flex-1 flex flex-col min-w-0 overflow-hidden">
+
+          <!-- Stat cards -->
+          <div class="grid grid-cols-3 border-b border-outline shrink-0">
+            <div class="p-4 border-r border-outline">
+              <p class="text-xs text-on_surface/50 mb-1 uppercase tracking-widest">Total Events</p>
+              <p id="stat-total-events" class="font-mono text-2xl text-primary">0</p>
+              <div class="mt-2 h-px w-full bg-surface-container-high">
+                <div id="stat-bar" class="h-full bg-[#38debb] transition-all duration-500" style="width:0%"></div>
+              </div>
+            </div>
+            <div class="p-4 border-r border-outline">
+              <p class="text-xs text-on_surface/50 mb-1 uppercase tracking-widest">Queries / min</p>
+              <div class="flex items-end gap-2">
+                <p id="stat-qpm" class="font-mono text-2xl text-primary">0</p>
+                <span id="stat-qpm-delta" class="text-xs text-[#38debb] font-bold mb-1">↑ 0</span>
+              </div>
+            </div>
+            <div class="p-4">
+              <p class="text-xs text-on_surface/50 mb-1 uppercase tracking-widest">Unique Domains</p>
+              <p id="stat-unique-domains" class="font-mono text-2xl text-primary">0</p>
+              <p class="text-xs text-on_surface/40 mt-1">Active in last 1hr</p>
+            </div>
+          </div>
+
+          <!-- Stream header -->
+          <div class="px-6 h-9 flex items-center justify-between border-b border-outline bg-surface-container-low shrink-0">
+            <h2 class="font-mono text-xs text-primary uppercase flex items-center gap-2">
+              <span class="w-1.5 h-1.5 rounded-full bg-[#38debb] pulsing-dot"></span>
+              Live Traffic Stream
+            </h2>
+            <span class="font-mono text-xs text-on_surface/40">FILTER: ALL_TRAFFIC</span>
+          </div>
+
+          <!-- Table -->
+          <div class="flex-1 overflow-auto">
+            <table class="w-full border-collapse text-left">
+              <thead class="sticky top-0 bg-background z-10">
+                <tr class="border-b border-outline">
+                  <th class="px-6 py-2 font-mono text-xs text-on_surface/40 uppercase tracking-widest">Time</th>
+                  <th class="px-6 py-2 font-mono text-xs text-on_surface/40 uppercase tracking-widest text-center">Type</th>
+                  <th class="px-6 py-2 font-mono text-xs text-on_surface/40 uppercase tracking-widest">Source IP</th>
+                  <th class="px-6 py-2 font-mono text-xs text-on_surface/40 uppercase tracking-widest">Domain</th>
+                  <th class="px-6 py-2 font-mono text-xs text-on_surface/40 uppercase tracking-widest">Dst IP</th>
+                </tr>
+              </thead>
+              <tbody id="live-tbody" class="divide-y divide-outline/20">
+                <tr id="empty-state">
+                  <td colspan="5" class="px-6 py-16 text-center">
+                    <span class="material-symbols-outlined text-4xl text-on_surface/20 block mb-2">wifi_tethering</span>
+                    <p class="font-mono text-xs text-on_surface/30 uppercase tracking-widest">Waiting for traffic...</p>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Right: sidebar -->
+        <aside class="w-80 flex flex-col border-l border-outline bg-surface-container shrink-0 overflow-y-auto">
+
+          <!-- Top Talkers -->
+          <div class="p-4 border-b border-outline shrink-0">
+            <h3 class="font-mono text-xs text-on_surface/50 uppercase tracking-widest mb-3">
+              Top Talkers
+            </h3>
+            <ul id="top-talkers-list" class="space-y-2">
+              <li class="font-mono text-xs text-on_surface/30 text-center py-2">No data yet</li>
+            </ul>
+          </div>
+
+          <!-- Blocked Domains -->
+          <div class="flex flex-col flex-1 min-h-0 p-4 border-b border-outline">
+            <h3 class="font-mono text-xs text-on_surface/50 uppercase tracking-widest mb-3">
+              Blocked Domains
+              <span id="blocklist-count" class="ml-2 text-[#38debb]">0</span>
+            </h3>
+
+            <div class="flex gap-2 mb-3">
+              <input id="block-domain-input" type="text" placeholder="e.g. ads.example.com" class="flex-1"/>
+              <button id="block-add-btn" class="btn-primary">Add</button>
+            </div>
+
+            <div class="flex items-center gap-2 mb-2">
+              <input id="block-select-all" type="checkbox" class="cursor-pointer"/>
+              <label for="block-select-all" class="font-mono text-xs text-on_surface/50 cursor-pointer select-none">
+                Select all
+              </label>
+              <button id="block-delete-selected" class="btn-danger ml-auto">Delete selected</button>
+            </div>
+
+            <ul id="blocklist" class="flex-1 overflow-auto space-y-0 min-h-0"></ul>
+          </div>
+
+          <!-- Developer -->
+          <div class="p-4 shrink-0">
+            <h3 class="font-mono text-xs text-on_surface/50 uppercase tracking-widest mb-3">Developer</h3>
+            <button id="demo-populate" class="btn-secondary w-full">Populate demo data</button>
+            <p class="font-mono text-xs text-on_surface/30 mt-2 leading-relaxed">
+              Inserts sample queries and a blocked domain for testing the live feed.
+            </p>
+          </div>
+        </aside>
+      </main>
+
+      <!-- Footer -->
+      <footer class="h-6 bg-surface-container-low border-t border-outline px-6 flex items-center justify-between shrink-0">
+        <div class="flex gap-4 font-mono text-xs text-on_surface/40 uppercase">
+          <span>SYSTEM: <span class="text-[#38debb]">READY</span></span>
+          <span id="footer-rows" class="text-on_surface/30">ROWS: 0</span>
+        </div>
+        <div class="flex gap-4 font-mono text-xs text-on_surface/40 uppercase">
+          <span>DNSFLOWD v1.0</span>
+          <span>PORT <span class="text-primary">5000</span></span>
+        </div>
+      </footer>
+    </div>
+
+    <script>
+    // ── Toast ──────────────────────────────────────────────────────────────────
+    function showToast(msg, type = "success") {
+      const t = document.getElementById("toast");
+      t.textContent = msg;
+      t.className = `show ${type}`;
+      clearTimeout(t._timer);
+      t._timer = setTimeout(() => t.className = "", 2500);
+    }
+
+    // ── Clock + uptime ─────────────────────────────────────────────────────────
+    const _startTime = Date.now();
+
+    function updateClock() {
+       const now = new Date();
+       let hh  = now.getUTCHours() + 3;
+       if (hh >= 24) hh -= 24;
+       hh = String(hh).padStart(2, "0");
+       const mm  = String(now.getUTCMinutes()).padStart(2, "0");
+       const ss  = String(now.getUTCSeconds()).padStart(2, "0");
+       document.getElementById("stat-time").textContent = `${hh}:${mm}:${ss}  Damascus`;
+
+      const elapsed = Math.floor((Date.now() - _startTime) / 1000);
+      const eh = String(Math.floor(elapsed / 3600)).padStart(2, "0");
+      const em = String(Math.floor((elapsed % 3600) / 60)).padStart(2, "0");
+      const es = String(elapsed % 60).padStart(2, "0");
+      document.getElementById("stat-uptime").textContent = `${eh}:${em}:${es}`;
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    document.getElementById("stat-server-ip").textContent =
+      window.location.hostname || "localhost";
+
+    // ── Stats ──────────────────────────────────────────────────────────────────
+    let _prevQpm = 0;
+
+    async function fetchStats() {
+      try {
+        const res = await fetch("/api/stats");
+        if (!res.ok) return;
+        const s = await res.json();
+
+        document.getElementById("stat-total-events").textContent =
+          s.total_events.toLocaleString();
+        document.getElementById("stat-unique-domains").textContent =
+          s.unique_domains.toLocaleString();
+
+        const qpm   = s.queries_per_min;
+        const delta = qpm - _prevQpm;
+        document.getElementById("stat-qpm").textContent = qpm;
+        const deltaEl = document.getElementById("stat-qpm-delta");
+        deltaEl.textContent = delta >= 0 ? `↑ ${delta}` : `↓ ${Math.abs(delta)}`;
+        deltaEl.style.color = delta >= 0 ? "#38debb" : "#ff6b6b";
+        _prevQpm = qpm;
+
+        const pct = Math.min(s.total_events / 1000 * 100, 100);
+        document.getElementById("stat-bar").style.width = pct + "%";
+      } catch (e) { console.warn("stats:", e); }
+    }
+
+    // ── Top Talkers ────────────────────────────────────────────────────────────
+    async function fetchTopTalkers() {
+      try {
+        const res  = await fetch("/api/top-talkers");
+        if (!res.ok) return;
+        const rows = await res.json();
+
+        const el = document.getElementById("top-talkers-list");
+        if (!rows.length) return;
+
+        const max = rows[0].count;
+        el.innerHTML = rows.map(r => `
+          <li>
+            <div class="flex justify-between items-center mb-1">
+              <span class="font-mono text-xs text-on_surface/70">${r.src}</span>
+              <span class="font-mono text-xs text-[#38debb] font-bold">${r.count}</span>
+            </div>
+            <div class="h-px w-full bg-surface-container-highest">
+              <div class="h-full bg-[#38debb]/50 transition-all duration-500"
+                   style="width:${Math.round(r.count / max * 100)}%"></div>
+            </div>
+          </li>
+        `).join("");
+      } catch (e) { console.warn("top-talkers:", e); }
+    }
+
+    // ── Live table ─────────────────────────────────────────────────────────────
+    let _rowCount = 0;
+
+    function removeEmptyState() {
+      const empty = document.getElementById("empty-state");
+      if (empty) empty.remove();
+    }
+
+    function prependLiveRow(item, flash = false) {
+      removeEmptyState();
+      const tb = document.getElementById("live-tbody");
+
+      const tr = document.createElement("tr");
+      tr.className = "hover:bg-surface-container-high transition-colors";
+      if (flash) tr.classList.add("row-new");
+
+      const cell = (text, extra = "") => {
+        const td = document.createElement("td");
+        td.className = `px-6 py-2 font-mono text-xs text-on_surface/60 ${extra}`;
+        td.textContent = text || "--";
+        return td;
+      };
+
+      // Time — show HH:MM:SS only
+      const ts = (item.timestamp || "").replace("T", " ").split(".")[0];
+      tr.appendChild(cell(ts.slice(11) || ts));
+
+      // Type badge
+      const typeTd = document.createElement("td");
+      typeTd.className = "px-6 py-2 text-center";
+      const badge = document.createElement("span");
+      badge.className = "px-2 py-0.5 font-mono text-xs font-bold";
+      const t = (item.type || "").toUpperCase();
+      badge.style.cssText = t === "QUERY"
+        ? "background:#1a4d3e;color:#38debb;border:1px solid #38debb44"
+        : "background:#1a2d4d;color:#64b5f6;border:1px solid #64b5f644";
+      badge.textContent = t || "?";
+      typeTd.appendChild(badge);
+      tr.appendChild(typeTd);
+
+      tr.appendChild(cell(item.src_ip));
+
+      const domTd = cell(item.domain || item.detail || "--");
+      domTd.style.color = "#38debb";
+      tr.appendChild(domTd);
+
+      tr.appendChild(cell(item.dst_ip));
+
+      tb.insertBefore(tr, tb.firstChild);
+
+      _rowCount++;
+      document.getElementById("footer-rows").textContent =
+        `ROWS: ${Math.min(_rowCount, 500)}`;
+      while (tb.childElementCount > 500) tb.removeChild(tb.lastChild);
+    }
+
+    async function fetchRecent() {
+      try {
+        const res  = await fetch("/api/recent?limit=200");
+        if (!res.ok) return;
+        const rows = await res.json();
+        // reverse so oldest is inserted first, newest ends on top
+        rows.reverse().forEach(r => prependLiveRow(r, false));
+      } catch (e) { console.warn("recent:", e); }
+    }
+
+    // ── SSE ────────────────────────────────────────────────────────────────────
+    function startSSE() {
+      const es = new EventSource("/stream");
+      es.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          prependLiveRow({
+            timestamp: new Date().toISOString(),
+            type:      "QUERY",
+            src_ip:    data.src_ip,
+            domain:    data.domain,
+            dst_ip:    "",
+          }, true);
+        } catch (_) {}
+      };
+      es.onerror = () => console.warn("SSE disconnected — will retry.");
+    }
+
+    // ── Blocklist ──────────────────────────────────────────────────────────────
+    async function fetchBlocklist() {
+      try {
+        const res  = await fetch("/api/blocklist");
+        if (!res.ok) return;
+        const list = await res.json();
+
+        document.getElementById("blocklist-count").textContent = list.length;
+        const el = document.getElementById("blocklist");
+        el.innerHTML = "";
+
+        if (!list.length) {
+          const empty = document.createElement("li");
+          empty.className = "font-mono text-xs text-on_surface/30 py-4 text-center";
+          empty.textContent = "No blocked domains";
+          el.appendChild(empty);
+          return;
+        }
+
+        for (const domain of list) {
+          const li = document.createElement("li");
+          li.className = "flex items-center justify-between py-2 border-b border-outline/20 gap-2";
+
+          const left = document.createElement("div");
+          left.className = "flex items-center gap-2 min-w-0";
+
+          const chk = document.createElement("input");
+          chk.type = "checkbox";
+          chk.className = "blk-chk shrink-0 cursor-pointer";
+          chk.dataset.domain = domain;
+
+          const span = document.createElement("span");
+          span.className = "font-mono text-xs text-on_surface/80 truncate";
+          span.textContent = domain;
+          span.title = domain;
+
+          left.appendChild(chk);
+          left.appendChild(span);
+
+          const del = document.createElement("button");
+          del.className = "btn-danger shrink-0";
+          del.textContent = "Delete";
+          del.onclick = async () => {
+            if (!confirm(`Remove "${domain}" from blocklist?`)) return;
+            const r = await fetch("/api/blocklist", {
+              method:  "DELETE",
+              headers: { "Content-Type": "application/json" },
+              body:    JSON.stringify({ domain }),
+            });
+            const j = await r.json();
+            if (r.ok && j.success) {
+              showToast(`Unblocked: ${domain}`);
+              fetchBlocklist();
+            } else {
+              showToast(j.message || "Failed", "error");
+            }
+          };
+
+          li.appendChild(left);
+          li.appendChild(del);
+          el.appendChild(li);
+        }
+
+        _syncSelectAll();
+      } catch (e) { console.warn("blocklist:", e); }
+    }
+
+    function _syncSelectAll() {
+      const all  = Array.from(document.querySelectorAll(".blk-chk"));
+      const chkd = all.filter(c => c.checked);
+      const sa   = document.getElementById("block-select-all");
+      sa.checked       = all.length > 0 && chkd.length === all.length;
+      sa.indeterminate = chkd.length > 0 && chkd.length < all.length;
+    }
+
+    // ── Init ───────────────────────────────────────────────────────────────────
+    window.addEventListener("load", () => {
+      fetchStats();
+      fetchTopTalkers();
+      fetchBlocklist();
+      fetchRecent();
+      startSSE();
+
+      setInterval(fetchStats,       5000);
+      setInterval(fetchTopTalkers, 10000);
+      setInterval(fetchBlocklist,   8000);
+
+      // Add domain — button
+      document.getElementById("block-add-btn").addEventListener("click", addDomain);
+
+      // Add domain — Enter key
+      document.getElementById("block-domain-input").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") addDomain();
+      });
+
+      async function addDomain() {
+        const inp    = document.getElementById("block-domain-input");
+        const domain = inp.value.trim().toLowerCase();
+        if (!domain) return showToast("Enter a domain first", "error");
+
+        const res = await fetch("/api/blocklist", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({ domain }),
+        });
+        const j = await res.json();
+        if (res.ok && j.success) {
+          inp.value = "";
+          showToast(`Blocked: ${domain}`);
+          fetchBlocklist();
+        } else {
+          showToast(j.message || "Failed to add", "error");
+        }
+      }
+
+      // Select all
+      document.getElementById("block-select-all").addEventListener("change", (e) => {
+        document.querySelectorAll(".blk-chk").forEach(cb => cb.checked = e.target.checked);
+        _syncSelectAll();
+      });
+
+      // Individual checkbox sync
+      document.getElementById("blocklist").addEventListener("change", (e) => {
+        if (e.target.classList.contains("blk-chk")) _syncSelectAll();
+      });
+
+      // Bulk delete
+      document.getElementById("block-delete-selected").addEventListener("click", async () => {
+        const checked = Array.from(document.querySelectorAll(".blk-chk:checked"));
+        if (!checked.length) return showToast("Nothing selected", "error");
+        if (!confirm(`Remove ${checked.length} domain(s)?`)) return;
+
+        for (const c of checked) {
+          await fetch("/api/blocklist", {
+            method:  "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify({ domain: c.dataset.domain }),
+          });
+        }
+        showToast(`Removed ${checked.length} domain(s)`);
+        fetchBlocklist();
+      });
+
+      // Demo
+      document.getElementById("demo-populate").addEventListener("click", async () => {
+        const res = await fetch("/api/demo/populate", { method: "POST" });
+        const j   = await res.json();
+        if (res.ok && j.success) {
+          showToast("Demo data inserted");
+          fetchRecent();
+          fetchBlocklist();
+          fetchStats();
+          fetchTopTalkers();
+        } else {
+          showToast("Failed to populate", "error");
+        }
+      });
+    });
+    </script>
+  </body>
+</html>
